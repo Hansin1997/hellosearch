@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"github.com/elastic/go-elasticsearch/v7"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"strings"
 	"time"
 )
 
 type Storage interface {
+	Search(query string, indexes []string, page int) (*SearchResults, error)
+	List() ([]string, error)
 }
+
 type ElasticStorage struct {
 	client  *elasticsearch.Client
 	context context.Context
@@ -83,6 +88,37 @@ func (e ElasticStorage) Search(query string, indexes []string, page int) (*Searc
 	return &results, nil
 }
 
+func (e ElasticStorage) List() ([]string, error) {
+	resp, err := e.client.Cat.Indices(e.client.Cat.Indices.WithIndex("spider-*"))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	bytes, _ := ioutil.ReadAll(resp.Body)
+	lines := strings.Split(string(bytes), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		items := strings.Split(line, " ")
+		if len(items) >= 2 {
+			result = append(result, strings.TrimSpace(items[2]))
+		}
+	}
+	return result, nil
+}
+
+func buildQuery(query string, from int) io.Reader {
+	var b strings.Builder
+
+	b.WriteString("{\n")
+
+	b.WriteString(fmt.Sprintf(searchMatch, query, from))
+
+	b.WriteString("\n}")
+
+	//fmt.Printf("%s\n", b.String())
+	return strings.NewReader(b.String())
+}
+
 type envelopeResponse struct {
 	Took int
 	Hits struct {
@@ -114,24 +150,12 @@ type Hit struct {
 	} `json:"highlights,omitempty"`
 }
 
-func buildQuery(query string, from int) io.Reader {
-	var b strings.Builder
-
-	b.WriteString("{\n")
-
-	b.WriteString(fmt.Sprintf(searchMatch, query, from))
-
-	b.WriteString("\n}")
-
-	//fmt.Printf("%s\n", b.String())
-	return strings.NewReader(b.String())
-}
-
 type Document struct {
-	Id      string
-	Url     string
-	Title   string
-	FetchAt time.Time
+	Id             string
+	Url            string
+	Title          string
+	ResponseHeader http.Header
+	FetchAt        time.Time
 }
 
 const searchMatch = `	"query" : {
@@ -141,7 +165,7 @@ const searchMatch = `	"query" : {
 			"operator" : "and"
 		}
 	},
-	"_source": ["Url","FetchAt","Title"]
+	"_source": ["Url","FetchAt","Title","ResponseHeader"]
 	,
 	"highlight" : {
 		"fields" : {

@@ -35,7 +35,8 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	storage, err := NewElasticStorage([]string{config.Host},
+	var storage Storage
+	storage, err = NewElasticStorage([]string{config.Host},
 		config.User,
 		config.Pass,
 		context.Background())
@@ -46,7 +47,16 @@ func main() {
 
 	r.Use(cors.Default())
 
-	r.GET("/doc", func(c *gin.Context) {
+	r.GET("/v1/indices", func(c *gin.Context) {
+		result, e := storage.List()
+		if e != nil {
+			c.JSON(400, e)
+		} else {
+			c.JSON(200, result)
+		}
+	})
+
+	r.GET("/v1/doc", func(c *gin.Context) {
 		q, e := url.QueryUnescape(c.Query("q"))
 		if e != nil {
 			q = c.Query("q")
